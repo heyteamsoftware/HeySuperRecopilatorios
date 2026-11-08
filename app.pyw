@@ -1,4 +1,4 @@
-"""SuperRecopilatorios — descarga en MP3 los éxitos de artistas o playlists de Spotify, en cola."""
+"""HeyMp3 — descarga en MP3 los éxitos de artistas o playlists de Spotify, en cola."""
 
 from __future__ import annotations
 
@@ -14,7 +14,8 @@ import actualizar
 import portadas
 import recopilador as rc
 
-APP = "SuperRecopilatorios"
+APP = "SuperRecopilatorios"  # carpeta de descargas y de configuración (no cambiar)
+NOMBRE = "HeyMp3"  # nombre visible de la app
 CONFIG = Path(os.environ.get("APPDATA", Path.home())) / APP / "config.json"
 
 # Paleta
@@ -147,7 +148,7 @@ class App:
         self.filas: list[FilaCancion] = []
         self._filas_de: Trabajo | None = None
 
-        raiz.title(APP)
+        raiz.title(NOMBRE)
         raiz.configure(bg=FONDO)
         try:
             raiz.iconbitmap(default=str(Path(__file__).with_name("icono.ico")))
@@ -206,7 +207,7 @@ class App:
         cab.pack(fill="x", padx=28, pady=(24, 6))
         fila_titulo = tk.Frame(cab, bg=FONDO)
         fila_titulo.pack(fill="x")
-        tk.Label(fila_titulo, text="SuperRecopilatorios", bg=FONDO, fg=TEXTO,
+        tk.Label(fila_titulo, text=NOMBRE, bg=FONDO, fg=TEXTO,
                  font=(FUENTE, 20, "bold")).pack(side="left")
         # Aparece solo cuando hay una versión nueva en GitHub
         self.btn_actualizar = self._boton(fila_titulo, "⬆  Actualizar app", self.actualizar_app)

@@ -1,10 +1,10 @@
-# SuperRecopilatorios
+# HeyMp3
 
 Escribe el nombre de un artista o pega una playlist de Spotify y la app descarga las canciones en **MP3 con su portada oficial**. Solo ves la lista de canciones y el % de progreso de cada una.
 
 ## Uso
 
-1. Abre **SuperRecopilatorios** (el acceso directo del Escritorio o de esta carpeta).
+1. Abre **HeyMp3** (el acceso directo del Escritorio o de esta carpeta, que se sigue llamando «SuperRecopilatorios»).
 2. Escribe un artista y pulsa **Intro**: descarga sus **20 grandes éxitos**.
 3. Puedes seguir escribiendo artistas mientras descarga: se ponen **en cola** y se descargan uno detrás de otro.
 4. También puedes pegar un enlace de **Spotify** (playlist, álbum o canción).
