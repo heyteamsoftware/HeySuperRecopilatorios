@@ -1,4 +1,4 @@
-"""Núcleo de SuperRecopilatorios: busca los grandes éxitos de un artista y los descarga en MP3."""
+"""Núcleo de SuperRecopilatorios: busca éxitos de artistas o playlists de Spotify y los descarga en MP3."""
 
 from __future__ import annotations
 
@@ -79,7 +79,8 @@ def buscar_exitos(artista: str, cantidad: int = NUM_EXITOS) -> tuple[str, list[C
     if not pistas:
         pistas = seccion.get("results", [])
     if len(pistas) < cantidad:
-        pistas += yt.search(nombre, filter="songs", limit=50)
+        # ytmusicapi no sabe filtrar canciones con la interfaz en español
+        pistas += YTMusic(language="en").search(nombre, filter="songs", limit=50)
 
     canciones: list[Cancion] = []
     vistos: set[str] = set()
@@ -176,8 +177,11 @@ def ffmpeg_disponible() -> bool:
     return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 
 
-def _descargar_una(cancion: Cancion, carpeta: str, avisar: Callable[[Cancion], None]) -> None:
-    base = _nombre_archivo(f"{cancion.indice:02d} - {cancion.artista} - {cancion.titulo}")
+def _descargar_una(cancion: Cancion, carpeta: str, avisar: Callable[[Cancion], None], digitos: int = 2) -> None:
+    if cancion.estado == "Error":  # p. ej. no se encontró en YouTube Music
+        avisar(cancion)
+        return
+    base = _nombre_archivo(f"{cancion.indice:0{digitos}d} - {cancion.artista} - {cancion.titulo}")
     destino_mp3 = os.path.join(carpeta, base + ".mp3")
 
     if os.path.exists(destino_mp3):
@@ -267,6 +271,124 @@ def descargar_todas(
 ) -> None:
     """Descarga todas las canciones (varias a la vez) y bloquea hasta terminar."""
     os.makedirs(carpeta, exist_ok=True)
+    digitos = max(2, len(str(len(canciones))))
     with ThreadPoolExecutor(max_workers=simultaneas) as pool:
         for c in canciones:
-            pool.submit(_descargar_una, c, carpeta, avisar)
+            pool.submit(_descargar_una, c, carpeta, avisar, digitos)
+
+
+# ---------------------------------------------------------------- Spotify
+
+_RE_SPOTIFY = re.compile(
+    r"(?:open\.spotify\.com/(?:intl-[a-z-]+/)?(?:embed/)?|spotify:)(playlist|album|track)[/:]([A-Za-z0-9]{10,})"
+)
+_NAVEGADOR = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/130.0 Safari/537.36"
+)
+
+
+def es_spotify(texto: str) -> bool:
+    return bool(_RE_SPOTIFY.search(texto or ""))
+
+
+def _leer_spotify(texto: str) -> tuple[str, list[dict]]:
+    """Lee una playlist, álbum o canción de Spotify desde su reproductor público.
+
+    Devuelve (nombre, [{titulo, artista, duracion}]). Spotify solo muestra ahí
+    las 100 primeras canciones de cada lista.
+    """
+    import json
+    import urllib.request
+
+    m = _RE_SPOTIFY.search(texto)
+    if not m:
+        raise LookupError("Eso no parece un enlace de Spotify.")
+    tipo, ident = m.groups()
+    peticion = urllib.request.Request(
+        f"https://open.spotify.com/embed/{tipo}/{ident}",
+        headers={"User-Agent": _NAVEGADOR, "Accept-Language": "es-ES,es;q=0.9"},
+    )
+    try:
+        with urllib.request.urlopen(peticion, timeout=20) as r:
+            html = r.read().decode("utf-8", "replace")
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "code", None) in (400, 404):
+            raise LookupError("No encuentro esa lista en Spotify. ¿Es pública?") from exc
+        raise
+    datos = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html, re.S)
+    if not datos:
+        raise LookupError("Spotify no ha devuelto la lista. ¿Es pública?")
+    entidad = json.loads(datos.group(1))["props"]["pageProps"]["state"]["data"]["entity"]
+
+    nombre = entidad.get("name") or entidad.get("title") or "Spotify"
+    pistas = []
+    if tipo == "track":
+        artistas = ", ".join(a.get("name", "") for a in entidad.get("artists") or []) or entidad.get("subtitle", "")
+        pistas.append({"titulo": _limpiar_titulo(nombre), "artista": artistas, "duracion": (entidad.get("duration") or 0) // 1000})
+        nombre = f"{artistas} - {nombre}"
+    else:
+        for t in entidad.get("trackList") or []:
+            if t.get("title"):
+                pistas.append({
+                    "titulo": _limpiar_titulo(t["title"]),
+                    "artista": (t.get("subtitle") or "").replace(" ", " "),
+                    "duracion": (t.get("duration") or 0) // 1000,
+                })
+    if not pistas:
+        raise LookupError("La lista de Spotify está vacía o no es pública.")
+    return nombre, pistas
+
+
+_COLETILLA = re.compile(
+    r"\s+-\s+[^-]*\b(remaster(ed)?|version|versi[oó]n|from|edit|mono|stereo|single|radio)\b.*$", re.IGNORECASE
+)
+
+
+def _limpiar_titulo(titulo: str) -> str:
+    """«Bohemian Rhapsody - Remastered 2011» -> «Bohemian Rhapsody»."""
+    return _COLETILLA.sub("", titulo).strip() or titulo
+
+
+def _emparejar(pista: dict) -> dict | None:
+    """Busca en YouTube Music la canción de Spotify (con la duración para acertar)."""
+    yt = YTMusic(language="en")  # con "es" la búsqueda de canciones no devuelve nada
+    consulta = f"{pista['artista'].split(',')[0]} {pista['titulo']}"
+    try:
+        resultados = [r for r in yt.search(consulta, filter="songs", limit=5) if r.get("videoId")]
+    except Exception:  # noqa: BLE001
+        resultados = []
+    if not resultados:
+        return None
+    if pista["duracion"]:
+        cercanos = [r for r in resultados if abs((r.get("duration_seconds") or 0) - pista["duracion"]) <= 15]
+        if cercanos:
+            return cercanos[0]
+    return resultados[0]
+
+
+def buscar_spotify(texto: str, avisar: Callable[[int, int], None] | None = None) -> tuple[str, list[Cancion]]:
+    """Convierte una playlist de Spotify en canciones de YouTube Music listas para bajar."""
+    nombre, pistas = _leer_spotify(texto)
+    canciones = [
+        Cancion(indice=i, video_id="", titulo=p["titulo"], artista=p["artista"], duracion=p["duracion"])
+        for i, p in enumerate(pistas, 1)
+    ]
+    hechas = 0
+
+    def resolver(c: Cancion, p: dict) -> None:
+        nonlocal hechas
+        r = _emparejar(p)
+        if r:
+            c.video_id = r["videoId"]
+            album = r.get("album")
+            c.album = album.get("name", "") if isinstance(album, dict) else ""
+        else:
+            c.estado, c.error = "Error", "No está en YouTube Music"
+        hechas += 1
+        if avisar:
+            avisar(hechas, len(canciones))
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(resolver, canciones, pistas))
+    return nombre, canciones
