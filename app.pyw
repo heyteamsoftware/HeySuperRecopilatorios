@@ -589,8 +589,14 @@ class App:
 
 
 def main() -> None:
+    import ctypes
+    try:
+        # Identidad propia en Windows: la barra de tareas muestra el icono de HeyMp3
+        # en vez del de Python (la app se ejecuta con pythonw.exe).
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("HeyTeamSoftware.HeyMp3")
+    except Exception:
+        pass
     try:  # textos nítidos en pantallas con escalado
-        import ctypes
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
