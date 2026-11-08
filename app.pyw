@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import filedialog, ttk
 
+import actualizar
+import portadas
 import recopilador as rc
 
 APP = "SuperRecopilatorios"
@@ -100,6 +102,8 @@ class Trabajo:
 
     consulta: str
     spotify: bool = False
+    portadas: bool = False  # tarea de «Revisar portadas»
+    avance: float = 0.0
     nombre: str = ""
     canciones: list = field(default_factory=list)
     carpeta: str = ""
@@ -116,6 +120,8 @@ class Trabajo:
         return "Playlist de Spotify" if self.spotify else self.consulta
 
     def progreso(self) -> float:
+        if self.portadas:
+            return self.avance
         if not self.canciones:
             return 0.0
         return sum(c.progreso if c.estado != "Error" else 100 for c in self.canciones) / len(self.canciones)
@@ -154,6 +160,8 @@ class App:
         self._estilos()
         self._construir()
         self._tic()
+        self.sha_nueva: str | None = None
+        threading.Thread(target=self._comprobar_actualizacion, daemon=True).start()
 
     # ---------- aspecto ----------
     def _estilos(self) -> None:
@@ -196,8 +204,12 @@ class App:
         r = self.raiz
         cab = tk.Frame(r, bg=FONDO)
         cab.pack(fill="x", padx=28, pady=(24, 6))
-        tk.Label(cab, text="SuperRecopilatorios", bg=FONDO, fg=TEXTO,
-                 font=(FUENTE, 20, "bold")).pack(anchor="w")
+        fila_titulo = tk.Frame(cab, bg=FONDO)
+        fila_titulo.pack(fill="x")
+        tk.Label(fila_titulo, text="SuperRecopilatorios", bg=FONDO, fg=TEXTO,
+                 font=(FUENTE, 20, "bold")).pack(side="left")
+        # Aparece solo cuando hay una versión nueva en GitHub
+        self.btn_actualizar = self._boton(fila_titulo, "⬆  Actualizar app", self.actualizar_app)
         tk.Label(cab, text="Escribe un artista o pega una playlist de Spotify. Puedes añadir varios: se descargan en cola.",
                  bg=FONDO, fg=SUAVE, font=(FUENTE, 10), anchor="w", justify="left",
                  wraplength=int(640 * self.escala)).pack(anchor="w", fill="x")
@@ -259,6 +271,8 @@ class App:
         self.btn_abrir.pack(side="right")
         self.btn_cambiar = self._boton(pie, "Cambiar…", self.cambiar_carpeta, primario=False)
         self.btn_cambiar.pack(side="right", padx=(0, 4))
+        self.btn_portadas = self._boton(pie, "Revisar portadas", self.revisar_portadas, primario=False)
+        self.btn_portadas.pack(side="right", padx=(0, 4))
         self._pintar_carpeta()
 
         if not rc.ffmpeg_disponible():
@@ -309,6 +323,8 @@ class App:
             texto = f"{icono}{t.etiqueta} · buscando…"
         elif t.estado == "descargando":
             texto = f"{icono}{t.etiqueta} · {int(t.progreso())} %"
+        elif t.estado == "listo" and t.portadas:
+            texto = f"{t.etiqueta} · hecho"
         elif t.estado == "listo":
             hechas = sum(c.estado == "Listo" for c in t.canciones)
             texto = f"{icono}{t.etiqueta} · {hechas}/{len(t.canciones)}"
@@ -366,6 +382,9 @@ class App:
         threading.Thread(target=self._trabajo, args=(t,), daemon=True).start()
 
     def _trabajo(self, t: Trabajo) -> None:
+        if t.portadas:
+            self._trabajo_portadas(t)
+            return
         try:
             if t.spotify:
                 nombre, canciones = rc.buscar_spotify(
@@ -424,6 +443,9 @@ class App:
             self.vacio.grid()
             if t is None:
                 self.vacio.configure(text="♪\n\nAquí aparecerán las canciones")
+            elif t.portadas:
+                self.vacio.configure(text="Portadas\n\nSe buscan las carátulas oficiales de todas tus descargas\n"
+                                          "y se ponen en cada MP3.")
             elif t.estado == "pendiente":
                 self.vacio.configure(text="En cola…\n\nEmpezará cuando terminen los anteriores")
             elif t.estado == "buscando":
@@ -432,6 +454,76 @@ class App:
                 self.vacio.configure(text="♪\n\nNo hay canciones")
         self._pintar_carpeta()
         self._refrescar()
+
+    # ---------- portadas ----------
+    def revisar_portadas(self) -> None:
+        if any(t.portadas and t.estado in ("pendiente", "buscando", "descargando") for t in self.trabajos):
+            return
+        t = Trabajo(consulta="Revisar portadas", portadas=True, nombre="Portadas", carpeta=self.carpeta_base)
+        self.trabajos.append(t)
+        self._crear_chip(t)
+        if self.activo is None:
+            self._siguiente()
+
+    def _trabajo_portadas(self, t: Trabajo) -> None:
+        t.estado = "descargando"
+        t.mensaje = "Buscando portadas oficiales…"
+
+        def avisar(n: int, total: int, c: dict) -> None:
+            t.avance = n / total * 100 if total else 100
+            t.mensaje = f"Revisando portadas… {n}/{total}  ·  {c['nueva']} nuevas"
+
+        try:
+            c = portadas.revisar_carpeta(t.carpeta, avisar=avisar)
+            total = sum(c.values())
+            if not total:
+                t.mensaje = "No hay canciones descargadas en esta carpeta."
+            else:
+                t.mensaje = f"¡Portadas revisadas! {c['nueva']} nuevas, {c['ya_tenia']} ya estaban bien"
+                if c["no_encontrada"] + c["error"]:
+                    t.mensaje += f", {c['no_encontrada'] + c['error']} sin encontrar (se quedan como estaban)"
+                t.mensaje += "."
+            t.estado = "listo"
+        except Exception:  # noqa: BLE001
+            t.estado, t.mensaje = "error", "No he podido revisar las portadas."
+        t.avance = 100
+        self.raiz.after(0, self._terminado, t)
+
+    # ---------- actualización desde GitHub ----------
+    def _comprobar_actualizacion(self) -> None:
+        sha = actualizar.hay_actualizacion()
+        if sha:
+            self.raiz.after(0, self._ofrecer_actualizacion, sha)
+
+    def _ofrecer_actualizacion(self, sha: str) -> None:
+        self.sha_nueva = sha
+        self.btn_actualizar.pack(side="right")
+
+    def actualizar_app(self) -> None:
+        if not self.sha_nueva:
+            return
+        if self.activo:
+            self.btn_actualizar.configure(text="Espera a que acabe la cola")
+            self.raiz.after(2500, lambda: self.btn_actualizar.configure(text="⬆  Actualizar app"))
+            return
+        self._activar(self.btn_actualizar, False)
+        self.btn_actualizar.configure(text="Actualizando…")
+        threading.Thread(target=self._actualizar_en_segundo_plano, daemon=True).start()
+
+    def _actualizar_en_segundo_plano(self) -> None:
+        try:
+            actualizar.actualizar(self.sha_nueva)
+        except Exception:  # noqa: BLE001
+            def fallo():
+                self._activar(self.btn_actualizar, True)
+                self.btn_actualizar.configure(text="No se pudo · reintentar")
+            self.raiz.after(0, fallo)
+            return
+        self.raiz.after(0, self._reiniciar)
+
+    def _reiniciar(self) -> None:
+        actualizar.reiniciar()
+        self.raiz.destroy()
 
     # ---------- acciones ----------
     def cambiar_carpeta(self) -> None:
@@ -456,7 +548,10 @@ class App:
             self._pintar_chip(self.activo)
             self._maquetar_cola()  # el % cambia el ancho de la etiqueta
 
-        if t and t.canciones:
+        if t and t.portadas:
+            self.barra_total["value"] = t.avance
+            self.lbl_total.configure(text=f"{int(t.avance)} %")
+        elif t and t.canciones:
             total = t.progreso()
             self.barra_total["value"] = total
             listas = sum(c.estado == "Listo" for c in t.canciones)
@@ -474,6 +569,8 @@ class App:
         elif t.estado == "buscando":
             texto = t.mensaje or ("Leyendo la playlist de Spotify…" if t.spotify else f"Buscando éxitos de «{t.consulta}»…")
             color = SUAVE
+        elif t.estado == "descargando" and t.portadas:
+            texto, color = t.mensaje, SUAVE
         elif t.estado == "descargando":
             texto, color = f"Descargando {len(t.canciones)} canciones de {t.etiqueta}…", SUAVE
         else:

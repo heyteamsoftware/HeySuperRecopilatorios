@@ -13,6 +13,8 @@ from typing import Callable
 from ytmusicapi import YTMusic
 import yt_dlp
 
+import portadas
+
 NUM_EXITOS = 20
 DESCARGAS_SIMULTANEAS = 3
 DURACION_MAX_SEG = 10 * 60  # descarta mezclas, directos larguísimos, etc.
@@ -34,7 +36,7 @@ class Cancion:
     album: str = ""
     duracion: int = 0
     progreso: float = 0.0  # 0..100
-    estado: str = "En cola"  # En cola | Preparando | Descargando | Convirtiendo | Listo | Error
+    estado: str = "En cola"  # En cola | Preparando | Descargando | Convirtiendo | Portada | Listo | Error
     archivo: str = ""
     error: str = ""
 
@@ -256,6 +258,10 @@ def _descargar_una(cancion: Cancion, carpeta: str, avisar: Callable[[Cancion], N
                 info[campo] = None
             ydl.process_ie_result(info, download=True)
         cancion.archivo = destino_mp3
+        # Cambia la miniatura de YouTube por la portada oficial del disco (si la encuentra).
+        cancion.estado = "Portada"
+        avisar(cancion)
+        portadas.poner_portada(destino_mp3, cancion.artista, cancion.titulo, cancion.album, forzar=True)
         cancion.progreso, cancion.estado = 100.0, "Listo"
     except Exception as exc:  # noqa: BLE001 - queremos seguir con el resto
         cancion.estado = "Error"
