@@ -17,6 +17,9 @@ from typing import Callable
 from mutagen.id3 import APIC, ID3, TCON, TDRC, TXXX, ID3NoHeaderError
 
 MARCA = "SR_PORTADA"  # etiqueta que indica que ya tiene la portada oficial
+MARCA_RECOPILATORIO = "SR_RECOPILATORIO"  # pista ya etiquetada como parte de «Artista - Grandes éxitos»
+ALBUM_ORIGINAL = "ALBUM_ORIGINAL"  # disco del que viene cada canción de un recopilatorio
+SUFIJO_EXITOS = " - Grandes éxitos"
 # MusicBrainz pide identificar la app con una forma de contacto
 _UA = {"User-Agent": "HeyMp3/1.0 ( https://github.com/heyteamsoftware/HeySuperRecopilatorios )",
        "Accept": "application/json"}
@@ -334,6 +337,87 @@ def poner_portada(mp3: str, artista: str | None = None, titulo: str | None = Non
         return "error"
 
 
+# ---------------------------------------------------------------- recopilatorios
+
+def foto_artista(artista: str) -> str | None:
+    """URL de la foto oficial del artista (Deezer, 1000x1000) o None.
+
+    Hay muchos homónimos: se elige el de nombre exacto con más seguidores.
+    """
+    clave = ("foto", _normalizar(artista))
+    if clave not in _cache_busquedas:
+        q = urllib.parse.quote(artista)
+        datos = _pedir("deezer", f"https://api.deezer.com/search/artist?limit=10&q={q}") or {}
+        candidatos = [a for a in datos.get("data", [])
+                      if _normalizar(a.get("name", "")) == _normalizar(artista)
+                      and a.get("picture_xl") and "/artist//" not in a["picture_xl"]]
+        candidatos.sort(key=lambda a: a.get("nb_fan") or 0, reverse=True)
+        _cache_busquedas[clave] = candidatos[0]["picture_xl"] if candidatos else None
+    return _cache_busquedas[clave]
+
+
+def imagen(url: str | None) -> bytes | None:
+    return _descargar_imagen(url) if url else None
+
+
+def _txxx(tags: ID3, clave: str) -> str:
+    f = tags.getall(f"TXXX:{clave}")
+    return str(f[0].text[0]) if f and f[0].text else ""
+
+
+def etiquetar_recopilatorio(mp3: str, artista: str, album: str, indice: int, total: int,
+                            portada: bytes | None, album_original: str = "", artista_cancion: str = "") -> str:
+    """Deja el MP3 como pista «indice/total» del recopilatorio «album» de «artista».
+
+    Todas las pistas comparten álbum, artista del álbum y portada, para que los
+    reproductores lo muestren como UN disco. Cada canción conserva el año de su
+    disco original, cuyo nombre se guarda en la etiqueta ALBUM_ORIGINAL.
+    Devuelve "nueva" o "error".
+    """
+    from mutagen.id3 import TALB, TPE2, TRCK
+
+    try:
+        tags = _leer(mp3)
+        talb = str(tags.get("TALB").text[0]) if tags.get("TALB") and tags.get("TALB").text else ""
+        album_original = album_original or _txxx(tags, ALBUM_ORIGINAL) or (talb if talb != album else "")
+        artista_cancion = artista_cancion or (str(tags.get("TPE1").text[0]) if tags.get("TPE1") else artista)
+        if album_original:
+            completar_datos(mp3, artista_cancion, album_original)  # año y género del disco original
+            tags = _leer(mp3)
+        for frame, valor in (("TALB", album), ("TPE2", artista), ("TRCK", f"{indice}/{total}")):
+            tags.delall(frame)
+            tags.add({"TALB": TALB, "TPE2": TPE2, "TRCK": TRCK}[frame](encoding=3, text=[valor]))
+        if album_original:
+            tags.delall(f"TXXX:{ALBUM_ORIGINAL}")
+            tags.add(TXXX(encoding=3, desc=ALBUM_ORIGINAL, text=[album_original]))
+        if portada:
+            tags.delall("APIC")
+            mime = "image/png" if portada[:4] == b"\x89PNG" else "image/jpeg"
+            tags.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=portada))
+        for clave, valor in ((MARCA, "recopilatorio"), (MARCA_RECOPILATORIO, album)):
+            tags.delall(f"TXXX:{clave}")
+            tags.add(TXXX(encoding=3, desc=clave, text=[valor]))
+        tags.save(mp3)
+        return "nueva"
+    except Exception:  # noqa: BLE001
+        return "error"
+
+
+def _portada_de_carpeta(carpeta: str, artista: str, archivos: list[str]) -> bytes | None:
+    """Portada común de un recopilatorio ya descargado: foto del artista o la de la pista 1."""
+    datos = imagen(foto_artista(artista))
+    if datos:
+        return datos
+    for ruta in archivos:  # ordenados: el primero es «01 - …»
+        try:
+            apic = _leer(ruta).getall("APIC")
+            if apic:
+                return apic[0].data
+        except Exception:  # noqa: BLE001
+            pass
+    return None
+
+
 def listar_mp3(carpeta: str) -> list[str]:
     archivos = []
     for raiz, _dirs, nombres in os.walk(carpeta):
@@ -343,15 +427,48 @@ def listar_mp3(carpeta: str) -> list[str]:
 
 def revisar_carpeta(carpeta: str, avisar: Callable[[int, int, dict], None] | None = None,
                     forzar: bool = False, hilos: int = 4) -> dict:
-    """Pone la portada oficial a todos los MP3 de la carpeta (y subcarpetas)."""
+    """Revisa todos los MP3 de la carpeta (y subcarpetas).
+
+    - En las carpetas «Artista - Grandes éxitos», deja cada pista como parte de UN
+      recopilatorio (mismo álbum, artista del álbum, numeración y portada).
+    - En el resto, pone la portada oficial de su disco y completa año y género.
+    """
     archivos = listar_mp3(carpeta)
     cuenta = {"nueva": 0, "ya_tenia": 0, "no_encontrada": 0, "error": 0}
     hechos = 0
     cerrojo = threading.Lock()
 
+    # Datos comunes de cada recopilatorio (se calculan una vez por carpeta)
+    recopilatorios: dict[str, dict] = {}
+    for ruta in archivos:
+        padre = os.path.dirname(ruta)
+        nombre = os.path.basename(padre)
+        if nombre.endswith(SUFIJO_EXITOS) and padre not in recopilatorios:
+            pistas = [r for r in archivos if os.path.dirname(r) == padre]
+            recopilatorios[padre] = {"artista": nombre[: -len(SUFIJO_EXITOS)], "album": nombre,
+                                     "pistas": pistas, "portada": None, "calculada": False}
+    cerrojo_recop = threading.Lock()
+
+    def recopilatorio(ruta: str) -> str:
+        datos = recopilatorios[os.path.dirname(ruta)]
+        tags = _leer(ruta)
+        if not forzar and _txxx(tags, MARCA_RECOPILATORIO) == datos["album"]:
+            return "ya_tenia"
+        with cerrojo_recop:
+            if not datos["calculada"]:
+                datos["portada"] = _portada_de_carpeta(os.path.dirname(ruta), datos["artista"], datos["pistas"])
+                datos["calculada"] = True
+        m = re.match(r"(\d+)", os.path.basename(ruta))
+        indice = int(m.group(1)) if m else datos["pistas"].index(ruta) + 1
+        return etiquetar_recopilatorio(ruta, datos["artista"], datos["album"], indice,
+                                       len(datos["pistas"]), datos["portada"])
+
     def uno(ruta: str) -> None:
         nonlocal hechos
-        r = poner_portada(ruta, forzar=forzar)
+        if os.path.dirname(ruta) in recopilatorios:
+            r = recopilatorio(ruta)
+        else:
+            r = poner_portada(ruta, forzar=forzar)
         with cerrojo:
             cuenta[r] += 1
             hechos += 1

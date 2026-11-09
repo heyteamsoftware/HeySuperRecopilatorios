@@ -293,7 +293,7 @@ class App:
         self.btn_abrir.pack(side="right")
         self.btn_cambiar = self._boton(pie, "Cambiar…", self.cambiar_carpeta, primario=False)
         self.btn_cambiar.pack(side="right", padx=(0, 4))
-        self.btn_portadas = self._boton(pie, "Revisar portadas", self.revisar_portadas, primario=False)
+        self.btn_portadas = self._boton(pie, "Revisar etiquetas", self.revisar_portadas, primario=False)
         self.btn_portadas.pack(side="right", padx=(0, 4))
         self._pintar_carpeta()
 
@@ -562,8 +562,8 @@ class App:
             if t is None:
                 self.vacio.configure(text="♪\n\nAquí aparecerán las canciones")
             elif t.portadas:
-                self.vacio.configure(text="Portadas\n\nSe buscan las carátulas oficiales de todas tus descargas\n"
-                                          "y se ponen en cada MP3.")
+                self.vacio.configure(text="Etiquetas y portadas\n\nLos «Grandes éxitos» quedan como un solo disco\n"
+                                          "y el resto de canciones con la portada oficial de su disco.")
             elif t.estado == "pendiente":
                 self.vacio.configure(text="En cola…\n\nEmpezará cuando terminen los anteriores")
             elif t.estado == "buscando":
@@ -577,7 +577,7 @@ class App:
     def revisar_portadas(self) -> None:
         if any(t.portadas and t.estado in ("pendiente", "buscando", "descargando") for t in self.trabajos):
             return
-        t = Trabajo(consulta="Revisar portadas", portadas=True, nombre="Portadas", carpeta=self.carpeta_base)
+        t = Trabajo(consulta="Revisar etiquetas", portadas=True, nombre="Etiquetas", carpeta=self.carpeta_base)
         self.trabajos.append(t)
         self._crear_chip(t)
         if self.activo is None:
@@ -585,11 +585,11 @@ class App:
 
     def _trabajo_portadas(self, t: Trabajo) -> None:
         t.estado = "descargando"
-        t.mensaje = "Buscando portadas oficiales…"
+        t.mensaje = "Revisando etiquetas y portadas…"
 
         def avisar(n: int, total: int, c: dict) -> None:
             t.avance = n / total * 100 if total else 100
-            t.mensaje = f"Revisando portadas… {n}/{total}  ·  {c['nueva']} nuevas"
+            t.mensaje = f"Revisando etiquetas… {n}/{total}  ·  {c['nueva']} actualizadas"
 
         try:
             c = portadas.revisar_carpeta(t.carpeta, avisar=avisar)
@@ -597,13 +597,13 @@ class App:
             if not total:
                 t.mensaje = "No hay canciones descargadas en esta carpeta."
             else:
-                t.mensaje = f"¡Portadas revisadas! {c['nueva']} nuevas, {c['ya_tenia']} ya estaban bien"
+                t.mensaje = f"¡Revisión hecha! {c['nueva']} actualizadas, {c['ya_tenia']} ya estaban bien"
                 if c["no_encontrada"] + c["error"]:
                     t.mensaje += f", {c['no_encontrada'] + c['error']} sin encontrar (se quedan como estaban)"
                 t.mensaje += "."
             t.estado = "listo"
         except Exception:  # noqa: BLE001
-            t.estado, t.mensaje = "error", "No he podido revisar las portadas."
+            t.estado, t.mensaje = "error", "No he podido revisar las etiquetas."
         t.avance = 100
         self.raiz.after(0, self._terminado, t)
 

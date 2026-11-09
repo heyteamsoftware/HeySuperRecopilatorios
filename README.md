@@ -16,17 +16,18 @@ Debajo de la caja aparece una etiqueta por cada artista o playlist: gris si espe
 
 Las canciones se guardan en `Música\SuperRecopilatorios\<Artista> - Grandes éxitos\` (o en una carpeta con el nombre de la playlist), con nombres tipo `01 - Queen - Bohemian Rhapsody.mp3`. Puedes cambiar la carpeta con **Cambiar…** y la app la recuerda.
 
-## Portadas
+## Portadas y etiquetas
 
-- Cada canción nueva lleva la **portada oficial del disco** (1000 × 1000 px), buscada en Deezer y, si no aparece, en iTunes. Solo se pone si el artista y el título coinciden; si no hay coincidencia segura, se queda la carátula de YouTube.
-- El botón **Revisar portadas** repasa todo lo que ya tienes descargado y pone la portada oficial a las canciones que aún no la tienen. Las que ya la tienen se saltan, así que puedes pulsarlo cuando quieras.
+- **Grandes éxitos = un solo disco.** Las 20 canciones de un artista se etiquetan como el álbum **«Artista - Grandes éxitos»**, con el artista como artista del álbum, numeradas «1/20» … «20/20» y con **una sola portada**: la foto oficial del artista (Deezer, 1000 × 1000 px). Así el reproductor las muestra juntas y no repartidas en quince discos. Cada canción conserva el año de su disco original, y el nombre de ese disco se guarda en la etiqueta `ALBUM_ORIGINAL`.
+- **Álbumes y playlists:** cada canción lleva la **portada oficial de su disco** (1000 × 1000 px), buscada en Deezer y, si no aparece, en iTunes. Solo se pone si el artista y el título coinciden; si no hay coincidencia segura, se queda la carátula de YouTube.
+- El botón **Revisar etiquetas** repasa todo lo que ya tienes descargado: convierte las carpetas «Artista - Grandes éxitos» antiguas en un solo disco, pone la portada oficial al resto y completa el año y el género que falten. Lo que ya está bien se salta, así que puedes pulsarlo cuando quieras.
 
 ## Cómo funciona
 
 - **Qué canciones elige:** pide a YouTube Music la lista «Canciones» del artista, que viene ordenada por popularidad. Descarta directos, remixes, karaokes y versiones repetidas, y se queda con las 20 primeras.
 - **Spotify:** lee la lista desde el reproductor público de Spotify (solo las 100 primeras canciones de cada playlist, y tiene que ser pública) y busca cada canción en YouTube Music, usando la duración para acertar con la versión.
 - **De dónde y a qué calidad:** el audio sale de YouTube Music con `yt-dlp`, a la mejor calidad disponible sin Premium (Opus a ~130 kbps), y se convierte a MP3 a 320 kbps con FFmpeg. Descarga 3 canciones a la vez.
-- **Etiquetas:** cada MP3 lleva título, artista, álbum, artista del álbum, número de pista («3/10»), portada, y el **año de la primera edición** del disco y su género (de MusicBrainz y Deezer).
+- **Etiquetas:** cada MP3 lleva título, artista, álbum, artista del álbum, número de pista («3/10»), portada, y el **año de la primera edición** de su disco y su género (de MusicBrainz y Deezer).
 - **Álbumes de Spotify:** se guardan como `Artista - Álbum (Año)`, con el mismo disco, artista y año en todas las pistas, y se prefiere la versión de ese disco antes que la de un recopilatorio.
 - Si vuelves a pedir el mismo artista, las canciones que ya tienes no se descargan otra vez.
 

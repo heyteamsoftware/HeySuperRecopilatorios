@@ -35,7 +35,9 @@ class Cancion:
     artista: str
     album: str = ""
     duracion: int = 0
-    artista_album: str = ""  # artista del disco (para álbumes completos)
+    artista_album: str = ""  # artista del disco (para álbumes completos y recopilatorios)
+    album_original: str = ""  # en un recopilatorio: el disco del que viene la canción
+    portada_recopilatorio: str = ""  # en un recopilatorio: URL de la portada común
     anio: str = ""
     total: int = 0  # número de pistas, para etiquetar «3/10»
     progreso: float = 0.0  # 0..100
@@ -120,8 +122,18 @@ def buscar_exitos(artista: str, cantidad: int = NUM_EXITOS) -> tuple[str, list[C
 
     if not canciones:
         raise LookupError(f"No he encontrado canciones de «{nombre}».")
+
+    # Las 20 forman UN disco: «Artista - Grandes éxitos», con una portada común
+    # (foto del artista en Deezer o, si no hay, la de YouTube Music en cuadrado).
+    portada = portadas.foto_artista(nombre) or ""
+    if not portada and ficha.get("thumbnails"):
+        portada = re.sub(r"=w\d+-h\d+", "=w1000-h1000", ficha["thumbnails"][-1]["url"])
     for c in canciones:
         c.total = len(canciones)
+        c.album_original = c.album
+        c.album = nombre + portadas.SUFIJO_EXITOS
+        c.artista_album = nombre
+        c.portada_recopilatorio = portada
     return nombre, canciones
 
 
@@ -267,9 +279,15 @@ def _descargar_una(cancion: Cancion, carpeta: str, avisar: Callable[[Cancion], N
         # Cambia la miniatura de YouTube por la portada oficial del disco (si la encuentra).
         cancion.estado = "Portada"
         avisar(cancion)
-        _etiquetar(destino_mp3, cancion)
-        portadas.poner_portada(destino_mp3, cancion.artista_album or cancion.artista, cancion.titulo,
-                               cancion.album, forzar=True)
+        if cancion.album_original or cancion.portada_recopilatorio:
+            # Pista de un recopilatorio: mismo disco, numeración y portada para todas
+            portadas.etiquetar_recopilatorio(
+                destino_mp3, cancion.artista_album, cancion.album, cancion.indice, cancion.total,
+                portadas.imagen(cancion.portada_recopilatorio), cancion.album_original, cancion.artista)
+        else:
+            _etiquetar(destino_mp3, cancion)
+            portadas.poner_portada(destino_mp3, cancion.artista_album or cancion.artista, cancion.titulo,
+                                   cancion.album, forzar=True)
         cancion.progreso, cancion.estado = 100.0, "Listo"
     except Exception as exc:  # noqa: BLE001 - queremos seguir con el resto
         cancion.estado = "Error"
