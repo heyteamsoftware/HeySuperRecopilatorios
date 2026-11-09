@@ -10,6 +10,8 @@ Escribe el nombre de un artista o pega una playlist de Spotify y la app descarga
 4. También puedes pegar un enlace de **Spotify** (playlist, álbum o canción). Los álbumes se guardan como `Artista - Álbum (Año)`.
 5. Al terminar, pulsa **Abrir carpeta**.
 
+Si pides un artista, álbum o playlist que **ya descargaste**, la app te avisa (con cuántas canciones y cuándo) y te deja elegir entre **Descargar otra vez** (solo baja lo que falte), **Abrir carpeta** o cancelar. También avisa si ya está en la cola.
+
 Debajo de la caja aparece una etiqueta por cada artista o playlist: gris si espera (✕ para quitarla), morada con su % si se está descargando, verde al terminar y roja si falla. Pulsa una etiqueta para ver sus canciones.
 
 Las canciones se guardan en `Música\SuperRecopilatorios\<Artista> - Grandes éxitos\` (o en una carpeta con el nombre de la playlist), con nombres tipo `01 - Queen - Bohemian Rhapsody.mp3`. Puedes cambiar la carpeta con **Cambiar…** y la app la recuerda.

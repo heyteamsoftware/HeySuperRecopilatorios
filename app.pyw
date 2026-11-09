@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import tkinter as tk
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +30,8 @@ OK = "#1FAA6B"
 MAL = "#E0475B"
 PISTA = "#E7E9F2"
 FUENTE = "Segoe UI"
+AVISO_FONDO = "#FFF3DC"
+AVISO_TEXTO = "#7A4B00"
 
 
 def _cargar_config() -> dict:
@@ -232,6 +235,21 @@ class App:
         self.btn = self._boton(caja, "Descargar", self.anadir)
         self.btn.pack(side="right")
 
+        # Aviso «ya lo descargaste» (solo se muestra cuando hace falta)
+        self.aviso = tk.Frame(r, bg=AVISO_FONDO)
+        self.aviso_texto = tk.Label(self.aviso, text="", bg=AVISO_FONDO, fg=AVISO_TEXTO, font=(FUENTE, 10),
+                                    anchor="w", justify="left", width=1)
+        # El texto salta de línea según el hueco que dejan los botones
+        self.aviso_texto.bind("<Configure>", lambda e: self.aviso_texto.configure(wraplength=max(e.width - 4, 50)))
+        self.aviso_botones = tk.Frame(self.aviso, bg=AVISO_FONDO)
+        self.aviso_botones.pack(side="right", padx=(0, 8))
+        self.aviso_texto.pack(side="left", fill="x", expand=True, padx=(12, 6), pady=8)
+        self.aviso_otra = self._enlace_aviso("Descargar otra vez", self._confirmar_aviso)
+        self.aviso_abrir = self._enlace_aviso("Abrir carpeta", self._abrir_aviso)
+        self.aviso_cerrar = self._enlace_aviso("✕", self._cerrar_aviso)
+        self._aviso_pendiente: str | None = None
+        self._aviso_carpeta = ""
+
         # Cola: una etiqueta por artista / playlist
         self.cola = tk.Frame(r, bg=FONDO, height=1)
         self.cola.pack(fill="x", padx=28, pady=(6, 0))
@@ -294,16 +312,103 @@ class App:
         if not texto or not rc.ffmpeg_disponible():
             return
         self.entrada.delete(0, "end")
-        spotify = rc.es_spotify(texto)
-        clave = texto.lower()
-        if any(t.consulta.lower() == clave and t.estado in ("pendiente", "buscando", "descargando")
+        if any(self._clave(t.consulta) == self._clave(texto) and t.estado in ("pendiente", "buscando", "descargando")
                for t in self.trabajos):
-            return  # ya está en la cola
-        t = Trabajo(consulta=texto, spotify=spotify)
+            self._mostrar_aviso(f"«{texto}» ya está en la cola.")
+            return
+        previo = self._ya_descargado(texto)
+        if previo:
+            canciones = previo.get("canciones") or 0
+            detalle = f"{canciones} canciones" if canciones else "ya descargado"
+            if previo.get("fecha"):
+                detalle += f", el {previo['fecha']}"
+            self._mostrar_aviso(f"Ya descargaste «{previo['nombre']}» ({detalle}). Si lo bajas otra vez, "
+                                f"solo se descarga lo que falte.", pendiente=texto, carpeta=previo.get("carpeta", ""))
+            return
+        self._encolar(texto)
+
+    def _encolar(self, texto: str) -> None:
+        self._cerrar_aviso()
+        t = Trabajo(consulta=texto, spotify=rc.es_spotify(texto))
         self.trabajos.append(t)
         self._crear_chip(t)
         if self.activo is None:
             self._siguiente()
+
+    # ---------- aviso «ya lo descargaste» ----------
+    def _enlace_aviso(self, texto: str, comando) -> tk.Label:
+        b = tk.Label(self.aviso_botones, text=texto, bg=AVISO_FONDO, fg=AVISO_TEXTO, cursor="hand2",
+                     font=(FUENTE, 9, "bold"), padx=8, pady=4)
+        b.bind("<Enter>", lambda e: b.configure(bg="#F7E3BC"))
+        b.bind("<Leave>", lambda e: b.configure(bg=AVISO_FONDO))
+        b.bind("<Button-1>", lambda e: comando())
+        return b
+
+    def _mostrar_aviso(self, texto: str, pendiente: str | None = None, carpeta: str = "") -> None:
+        self._aviso_pendiente, self._aviso_carpeta = pendiente, carpeta
+        self.aviso_texto.configure(text=texto)
+        for b in (self.aviso_otra, self.aviso_abrir, self.aviso_cerrar):
+            b.pack_forget()
+        # De izquierda a derecha: Descargar otra vez · Abrir carpeta · ✕
+        if pendiente:
+            self.aviso_otra.pack(side="left")
+        if carpeta and os.path.isdir(carpeta):
+            self.aviso_abrir.pack(side="left")
+        self.aviso_cerrar.pack(side="left")
+        self.aviso.pack(fill="x", padx=28, pady=(8, 0), before=self.cola)
+
+    def _cerrar_aviso(self) -> None:
+        self._aviso_pendiente = None
+        self.aviso.pack_forget()
+
+    def _confirmar_aviso(self) -> None:
+        if self._aviso_pendiente:
+            self._encolar(self._aviso_pendiente)
+
+    def _abrir_aviso(self) -> None:
+        if self._aviso_carpeta and os.path.isdir(self._aviso_carpeta):
+            os.startfile(self._aviso_carpeta)
+
+    @staticmethod
+    def _clave(texto: str) -> str:
+        if rc.es_spotify(texto):
+            tipo, ident = rc.id_spotify(texto)
+            return f"spotify:{tipo}:{ident}"
+        return "artista:" + rc._normalizar(texto)
+
+    def _ya_descargado(self, texto: str) -> dict | None:
+        """¿Se descargó antes? Mira el historial y, para artistas, las carpetas «X - Grandes éxitos»."""
+        historial = self.config.get("historial") or {}
+        previo = historial.get(self._clave(texto))
+        if previo and os.path.isdir(previo.get("carpeta", "")):
+            return previo
+        if rc.es_spotify(texto) or not os.path.isdir(self.carpeta_base):
+            return None
+        buscado = rc._normalizar(texto)
+        sufijo = " - Grandes éxitos"
+        for nombre in os.listdir(self.carpeta_base):
+            ruta = os.path.join(self.carpeta_base, nombre)
+            if not (nombre.endswith(sufijo) and os.path.isdir(ruta)):
+                continue
+            if rc._normalizar(nombre[: -len(sufijo)]) != buscado:
+                continue
+            mp3 = [os.path.join(ruta, f) for f in os.listdir(ruta) if f.lower().endswith(".mp3")]
+            if not mp3:
+                return None
+            fecha = time.strftime("%d/%m/%Y", time.localtime(max(os.path.getmtime(f) for f in mp3)))
+            return {"nombre": nombre[: -len(sufijo)], "carpeta": ruta, "canciones": len(mp3), "fecha": fecha}
+        return None
+
+    def _apuntar_historial(self, t: Trabajo, hechas: int) -> None:
+        if not hechas:
+            return
+        datos = {"nombre": t.nombre, "carpeta": t.carpeta, "canciones": hechas,
+                 "fecha": time.strftime("%d/%m/%Y")}
+        historial = self.config.setdefault("historial", {})
+        historial[self._clave(t.consulta)] = datos
+        if not t.spotify:  # también por el nombre oficial («queen» y «Queen» son el mismo)
+            historial[self._clave(t.nombre)] = datos
+        _guardar_config(self.config)
 
     def _crear_chip(self, t: Trabajo) -> None:
         chip = tk.Frame(self.cola, bg=PISTA, highlightthickness=2, highlightbackground=FONDO, cursor="hand2")
@@ -423,6 +528,7 @@ class App:
         if fallos:
             t.mensaje += f"  ({fallos} no se pudieron descargar)"
         t.estado = "listo"
+        self.raiz.after(0, self._apuntar_historial, t, hechas)
         self.raiz.after(0, self._terminado, t)
 
     def _ver_si_toca(self, t: Trabajo) -> None:

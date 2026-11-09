@@ -322,6 +322,12 @@ def es_spotify(texto: str) -> bool:
     return bool(_RE_SPOTIFY.search(texto or ""))
 
 
+def id_spotify(texto: str) -> tuple[str, str]:
+    """(tipo, identificador) de un enlace de Spotify, o ("", "")."""
+    m = _RE_SPOTIFY.search(texto or "")
+    return (m.group(1), m.group(2)) if m else ("", "")
+
+
 def tipo_spotify(texto: str) -> str:
     """«playlist», «album» o «track» (o "" si no es un enlace de Spotify)."""
     m = _RE_SPOTIFY.search(texto or "")
