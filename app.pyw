@@ -118,7 +118,10 @@ class Trabajo:
     def etiqueta(self) -> str:
         if self.nombre:
             return self.nombre
-        return "Playlist de Spotify" if self.spotify else self.consulta
+        if self.spotify:
+            return {"album": "Álbum de Spotify", "track": "Canción de Spotify"}.get(
+                rc.tipo_spotify(self.consulta), "Playlist de Spotify")
+        return self.consulta
 
     def progreso(self) -> float:
         if self.portadas:
@@ -407,8 +410,16 @@ class App:
         rc.descargar_todas(canciones, t.carpeta, avisar=lambda c: None)
         hechas = sum(c.estado == "Listo" for c in canciones)
         fallos = len(canciones) - hechas
-        de = f"de la playlist «{nombre}»" if t.spotify else f"de {nombre}"
-        t.mensaje = f"¡Listo! {hechas} canciones {de} descargadas."
+        tipo = rc.tipo_spotify(t.consulta) if t.spotify else ""
+        cuantas = "1 canción" if hechas == 1 else f"{hechas} canciones"
+        if tipo == "album":
+            t.mensaje = f"¡Listo! Álbum «{nombre}» descargado ({cuantas})."
+        elif tipo == "playlist":
+            t.mensaje = f"¡Listo! Playlist «{nombre}» descargada ({cuantas})."
+        elif tipo == "track":
+            t.mensaje = f"¡Listo! «{nombre}» descargada."
+        else:
+            t.mensaje = f"¡Listo! {cuantas} de {nombre} descargada{'s' if hechas != 1 else ''}."
         if fallos:
             t.mensaje += f"  ({fallos} no se pudieron descargar)"
         t.estado = "listo"
@@ -450,7 +461,7 @@ class App:
             elif t.estado == "pendiente":
                 self.vacio.configure(text="En cola…\n\nEmpezará cuando terminen los anteriores")
             elif t.estado == "buscando":
-                self.vacio.configure(text="Leyendo la playlist…" if t.spotify else "Buscando los grandes éxitos…")
+                self.vacio.configure(text="Leyendo Spotify…" if t.spotify else "Buscando los grandes éxitos…")
             else:
                 self.vacio.configure(text="♪\n\nNo hay canciones")
         self._pintar_carpeta()
@@ -568,12 +579,17 @@ class App:
         elif t.estado == "pendiente":
             texto, color = f"«{t.etiqueta}» está en cola.", SUAVE
         elif t.estado == "buscando":
-            texto = t.mensaje or ("Leyendo la playlist de Spotify…" if t.spotify else f"Buscando éxitos de «{t.consulta}»…")
+            texto = t.mensaje or ("Leyendo Spotify…" if t.spotify else f"Buscando éxitos de «{t.consulta}»…")
             color = SUAVE
         elif t.estado == "descargando" and t.portadas:
             texto, color = t.mensaje, SUAVE
         elif t.estado == "descargando":
-            texto, color = f"Descargando {len(t.canciones)} canciones de {t.etiqueta}…", SUAVE
+            cuantas = "1 canción" if len(t.canciones) == 1 else f"{len(t.canciones)} canciones"
+            if t.spotify and rc.tipo_spotify(t.consulta) == "album":
+                texto = f"Descargando el álbum {t.etiqueta}  ·  {cuantas}…"
+            else:
+                texto = f"Descargando {cuantas} de {t.etiqueta}…"
+            color = SUAVE
         else:
             texto, color = t.mensaje, (MAL if t.estado == "error" else OK)
         en_cola = sum(x.estado == "pendiente" for x in self.trabajos)

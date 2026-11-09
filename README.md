@@ -7,7 +7,7 @@ Escribe el nombre de un artista o pega una playlist de Spotify y la app descarga
 1. Abre **HeyMp3** (el acceso directo del Escritorio o de esta carpeta, que se sigue llamando «SuperRecopilatorios»).
 2. Escribe un artista y pulsa **Intro**: descarga sus **20 grandes éxitos**.
 3. Puedes seguir escribiendo artistas mientras descarga: se ponen **en cola** y se descargan uno detrás de otro.
-4. También puedes pegar un enlace de **Spotify** (playlist, álbum o canción).
+4. También puedes pegar un enlace de **Spotify** (playlist, álbum o canción). Los álbumes se guardan como `Artista - Álbum (Año)`.
 5. Al terminar, pulsa **Abrir carpeta**.
 
 Debajo de la caja aparece una etiqueta por cada artista o playlist: gris si espera (✕ para quitarla), morada con su % si se está descargando, verde al terminar y roja si falla. Pulsa una etiqueta para ver sus canciones.
@@ -24,7 +24,8 @@ Las canciones se guardan en `Música\SuperRecopilatorios\<Artista> - Grandes éx
 - **Qué canciones elige:** pide a YouTube Music la lista «Canciones» del artista, que viene ordenada por popularidad. Descarta directos, remixes, karaokes y versiones repetidas, y se queda con las 20 primeras.
 - **Spotify:** lee la lista desde el reproductor público de Spotify (solo las 100 primeras canciones de cada playlist, y tiene que ser pública) y busca cada canción en YouTube Music, usando la duración para acertar con la versión.
 - **De dónde y a qué calidad:** el audio sale de YouTube Music con `yt-dlp`, a la mejor calidad disponible sin Premium (Opus a ~130 kbps), y se convierte a MP3 a 320 kbps con FFmpeg. Descarga 3 canciones a la vez.
-- **Etiquetas:** cada MP3 lleva título, artista, álbum, número de pista y portada.
+- **Etiquetas:** cada MP3 lleva título, artista, álbum, artista del álbum, número de pista («3/10»), portada, y el **año de la primera edición** del disco y su género (de MusicBrainz y Deezer).
+- **Álbumes de Spotify:** se guardan como `Artista - Álbum (Año)`, con el mismo disco, artista y año en todas las pistas, y se prefiere la versión de ese disco antes que la de un recopilatorio.
 - Si vuelves a pedir el mismo artista, las canciones que ya tienes no se descargan otra vez.
 
 ## Instalar en otro PC

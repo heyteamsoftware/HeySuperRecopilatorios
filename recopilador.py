@@ -35,6 +35,9 @@ class Cancion:
     artista: str
     album: str = ""
     duracion: int = 0
+    artista_album: str = ""  # artista del disco (para álbumes completos)
+    anio: str = ""
+    total: int = 0  # número de pistas, para etiquetar «3/10»
     progreso: float = 0.0  # 0..100
     estado: str = "En cola"  # En cola | Preparando | Descargando | Convirtiendo | Portada | Listo | Error
     archivo: str = ""
@@ -117,6 +120,8 @@ def buscar_exitos(artista: str, cantidad: int = NUM_EXITOS) -> tuple[str, list[C
 
     if not canciones:
         raise LookupError(f"No he encontrado canciones de «{nombre}».")
+    for c in canciones:
+        c.total = len(canciones)
     return nombre, canciones
 
 
@@ -247,8 +252,9 @@ def _descargar_una(cancion: Cancion, carpeta: str, avisar: Callable[[Cancion], N
             info["title"] = info["track"] = cancion.titulo
             info["artists"] = artistas
             info["artist"] = cancion.artista
-            info["album_artists"] = artistas[:1]
-            info["album_artist"] = artistas[0] if artistas else cancion.artista
+            artista_album = cancion.artista_album or (artistas[0] if artistas else cancion.artista)
+            info["album_artists"] = [artista_album]
+            info["album_artist"] = artista_album
             if cancion.album:
                 info["album"] = cancion.album
             info["track_number"] = cancion.indice
@@ -261,12 +267,30 @@ def _descargar_una(cancion: Cancion, carpeta: str, avisar: Callable[[Cancion], N
         # Cambia la miniatura de YouTube por la portada oficial del disco (si la encuentra).
         cancion.estado = "Portada"
         avisar(cancion)
-        portadas.poner_portada(destino_mp3, cancion.artista, cancion.titulo, cancion.album, forzar=True)
+        _etiquetar(destino_mp3, cancion)
+        portadas.poner_portada(destino_mp3, cancion.artista_album or cancion.artista, cancion.titulo,
+                               cancion.album, forzar=True)
         cancion.progreso, cancion.estado = 100.0, "Listo"
     except Exception as exc:  # noqa: BLE001 - queremos seguir con el resto
         cancion.estado = "Error"
         cancion.error = re.sub(r"^ERROR:\s*", "", str(exc)).splitlines()[0][:200]
     avisar(cancion)
+
+
+def _etiquetar(mp3: str, cancion: Cancion) -> None:
+    """Número de pista «n/total» y año del disco (si se conoce)."""
+    from mutagen.id3 import TDRC, TRCK
+
+    try:
+        tags = portadas._leer(mp3)
+        tags.delall("TRCK")
+        tags.add(TRCK(encoding=3, text=[f"{cancion.indice}/{cancion.total}" if cancion.total else str(cancion.indice)]))
+        if cancion.anio:
+            tags.delall("TDRC")
+            tags.add(TDRC(encoding=3, text=[cancion.anio]))
+        tags.save(mp3)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def descargar_todas(
@@ -298,10 +322,16 @@ def es_spotify(texto: str) -> bool:
     return bool(_RE_SPOTIFY.search(texto or ""))
 
 
-def _leer_spotify(texto: str) -> tuple[str, list[dict]]:
+def tipo_spotify(texto: str) -> str:
+    """«playlist», «album» o «track» (o "" si no es un enlace de Spotify)."""
+    m = _RE_SPOTIFY.search(texto or "")
+    return m.group(1) if m else ""
+
+
+def _leer_spotify(texto: str) -> tuple[str, str, str, list[dict]]:
     """Lee una playlist, álbum o canción de Spotify desde su reproductor público.
 
-    Devuelve (nombre, [{titulo, artista, duracion}]). Spotify solo muestra ahí
+    Devuelve (tipo, nombre, artista, [{titulo, artista, duracion}]). Spotify solo muestra ahí
     las 100 primeras canciones de cada lista.
     """
     import json
@@ -328,6 +358,7 @@ def _leer_spotify(texto: str) -> tuple[str, list[dict]]:
     entidad = json.loads(datos.group(1))["props"]["pageProps"]["state"]["data"]["entity"]
 
     nombre = entidad.get("name") or entidad.get("title") or "Spotify"
+    artista = (entidad.get("subtitle") or "").replace(" ", " ") if tipo == "album" else ""
     pistas = []
     if tipo == "track":
         artistas = ", ".join(a.get("name", "") for a in entidad.get("artists") or []) or entidad.get("subtitle", "")
@@ -343,7 +374,7 @@ def _leer_spotify(texto: str) -> tuple[str, list[dict]]:
                 })
     if not pistas:
         raise LookupError("La lista de Spotify está vacía o no es pública.")
-    return nombre, pistas
+    return tipo, nombre, artista, pistas
 
 
 _COLETILLA = re.compile(
@@ -356,8 +387,8 @@ def _limpiar_titulo(titulo: str) -> str:
     return _COLETILLA.sub("", titulo).strip() or titulo
 
 
-def _emparejar(pista: dict) -> dict | None:
-    """Busca en YouTube Music la canción de Spotify (con la duración para acertar)."""
+def _emparejar(pista: dict, album: str = "") -> dict | None:
+    """Busca en YouTube Music la canción de Spotify (con la duración y el disco para acertar)."""
     yt = YTMusic(language="en")  # con "es" la búsqueda de canciones no devuelve nada
     consulta = f"{pista['artista'].split(',')[0]} {pista['titulo']}"
     try:
@@ -369,26 +400,41 @@ def _emparejar(pista: dict) -> dict | None:
     if pista["duracion"]:
         cercanos = [r for r in resultados if abs((r.get("duration_seconds") or 0) - pista["duracion"]) <= 15]
         if cercanos:
-            return cercanos[0]
+            resultados = cercanos
+    if album:  # en un álbum, mejor la versión de ese disco que la de un recopilatorio
+        clave = _normalizar(album)
+        del_disco = [r for r in resultados
+                     if isinstance(r.get("album"), dict) and _normalizar(r["album"].get("name", "")) == clave]
+        if del_disco:
+            return del_disco[0]
     return resultados[0]
 
 
 def buscar_spotify(texto: str, avisar: Callable[[int, int], None] | None = None) -> tuple[str, list[Cancion]]:
     """Convierte una playlist de Spotify en canciones de YouTube Music listas para bajar."""
-    nombre, pistas = _leer_spotify(texto)
+    tipo, nombre, artista_disco, pistas = _leer_spotify(texto)
+    album, anio = "", ""
+    if tipo == "album":
+        # Álbum completo: mismo disco, artista y año en todas las pistas
+        album = nombre
+        ficha = portadas.info_album(artista_disco, album)
+        anio = ficha["anio"] if ficha else ""
+        nombre = f"{artista_disco} - {album}" + (f" ({anio})" if anio else "")
     canciones = [
-        Cancion(indice=i, video_id="", titulo=p["titulo"], artista=p["artista"], duracion=p["duracion"])
+        Cancion(indice=i, video_id="", titulo=p["titulo"], artista=p["artista"], duracion=p["duracion"],
+                album=album, artista_album=artista_disco, anio=anio, total=len(pistas))
         for i, p in enumerate(pistas, 1)
     ]
     hechas = 0
 
     def resolver(c: Cancion, p: dict) -> None:
         nonlocal hechas
-        r = _emparejar(p)
+        r = _emparejar(p, album)
         if r:
             c.video_id = r["videoId"]
-            album = r.get("album")
-            c.album = album.get("name", "") if isinstance(album, dict) else ""
+            if not album:  # en playlists, cada canción con su propio disco
+                su_album = r.get("album")
+                c.album = su_album.get("name", "") if isinstance(su_album, dict) else ""
         else:
             c.estado, c.error = "Error", "No está en YouTube Music"
         hechas += 1
